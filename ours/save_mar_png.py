@@ -83,7 +83,7 @@ def main():
             disp = mar01_to_hu(mar2d)
 
         u8 = window_to_uint8(disp, args.vmin, args.vmax)
-        out_path = out_dir / f"slice_{i:04d}.png"
+        out_path = out_dir / f"{i:04d}.png"
         Image.fromarray(u8, mode="L").save(out_path)
 
         if i == start or ((i - start) // args.every) % 50 == 0:

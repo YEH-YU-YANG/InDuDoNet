@@ -138,7 +138,7 @@ def export_one_case(raw_path: Path, mar_path: Path, out_dir: Path,
         diff_u8 = window_to_uint8(diff, float(dmin), float(dmax))
 
         trip = make_triptych(before_u8, after_u8, diff_u8, gap=8)
-        out_path = out_dir / f"slice_{i:04d}.png"
+        out_path = out_dir / f"{i:04d}.png"
         trip.save(out_path)
 
         if i == start or ((i - start) // every) % 20 == 0:
@@ -169,13 +169,7 @@ def main():
     ap.add_argument("--rot90", type=int, default=0)
     ap.add_argument("--flipud", action="store_true")
     ap.add_argument("--fliplr", action="store_true")
-    # ap.add_argument(
-    #     "--slice_order",
-    #     type=str,
-    #     choices=["index", "physical"],
-    #     default="physical",
-    #     help="index: 0->end 依陣列索引；physical: 依 affine 判斷 z 方向，必要時反轉以匹配 DICOM/ITK"
-    # )
+
     
     args = ap.parse_args()
 
