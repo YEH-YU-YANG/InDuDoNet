@@ -1,0 +1,6 @@
+pydicom
+numpy
+nibabel
+scipy
+Pillow
+imageio

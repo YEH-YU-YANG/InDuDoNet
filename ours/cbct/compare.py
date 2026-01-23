@@ -5,6 +5,7 @@ import numpy as np
 import nibabel as nib
 from PIL import Image
 
+from .utils import get_slope_inter, mar01_to_hu, window_to_uint8, resize2d, rot_flip
 
 def key_from_path(p: Path) -> str:
     """把 xxx.nii 或 xxx.nii.gz 轉成 key=xxx"""
@@ -14,7 +15,6 @@ def key_from_path(p: Path) -> str:
     if name.endswith(".nii"):
         return name[:-4]
     return p.stem
-
 
 def find_nii_by_key(root: Path, key: str) -> Path:
     """在 root 下找 key.nii.gz 或 key.nii；找不到就 raise。"""
@@ -32,48 +32,8 @@ def find_nii_by_key(root: Path, key: str) -> Path:
 
     raise FileNotFoundError(f"找不到病例 {key} 的 NIfTI：在 {root} 下找不到 {key}.nii.gz / {key}.nii")
 
-
 def list_nii(root: Path):
     return sorted(list(root.glob("*.nii")) + list(root.glob("*.nii.gz")))
-
-
-def get_slope_inter(nii: nib.Nifti1Image):
-    slope, inter = nii.header.get_slope_inter()
-    if slope is None:
-        slope = 1.0
-    if inter is None:
-        inter = 0.0
-    return float(slope), float(inter)
-
-
-def mar01_to_hu(mar01: np.ndarray) -> np.ndarray:
-    # preprocessing_clinic.py: x = HU/1000*0.192 + 0.192
-    return (mar01 - 0.192) / 0.192 * 1000.0
-
-
-def window_to_uint8(x: np.ndarray, vmin: float, vmax: float) -> np.ndarray:
-    x = np.clip(x, vmin, vmax)
-    x = (x - vmin) / (vmax - vmin + 1e-8)
-    return (x * 255.0).astype(np.uint8)
-
-
-def rot_flip(x: np.ndarray, rot90: int = 0, flipud: bool = False, fliplr: bool = False) -> np.ndarray:
-    if rot90:
-        x = np.rot90(x, rot90)
-    if flipud:
-        x = np.flipud(x)
-    if fliplr:
-        x = np.fliplr(x)
-    return x
-
-
-def resize2d(arr2d: np.ndarray, out_hw) -> np.ndarray:
-    H_out, W_out = out_hw
-    im = Image.fromarray(arr2d.astype(np.float32), mode="F")
-    resample = getattr(getattr(Image, "Resampling", Image), "BILINEAR")
-    im = im.resize((W_out, H_out), resample=resample)
-    return np.array(im, dtype=np.float32)
-
 
 def make_triptych(before_u8, after_u8, diff_u8, gap=8):
     H, W = before_u8.shape
@@ -82,7 +42,6 @@ def make_triptych(before_u8, after_u8, diff_u8, gap=8):
     out.paste(Image.fromarray(after_u8), (W + gap, 0))
     out.paste(Image.fromarray(diff_u8), (2 * W + 2 * gap, 0))
     return out
-
 
 def export_one_case(raw_path: Path, mar_path: Path, out_dir: Path,
                     vmin: float, vmax: float, start: int, end: int, every: int,
@@ -146,58 +105,34 @@ def export_one_case(raw_path: Path, mar_path: Path, out_dir: Path,
 
     print("  Done.")
 
-
-def main():
-    ap = argparse.ArgumentParser()
-
-    # 路徑（新）
-    ap.add_argument("--raw_root", type=str, required=True, help="原始 NIfTI 資料夾（例如 data_origin/）")
-    ap.add_argument("--mar_root", type=str, required=True, help="推論輸出 NIfTI 資料夾（例如 ../results/.../X_mar/）")
-    ap.add_argument("--out_root", type=str, required=True, help="輸出根資料夾（每位病人會輸出到 out_root/<case_id>/）")
-
-    # 單病人（可選）：不給就批次
-    ap.add_argument("--case_id", type=str, default="", help="指定單一病人 ID（檔名不含副檔名，例如 28643177）")
-
-    # 顯示/輸出控制
-    ap.add_argument("--vmin", type=float, default=-1000)
-    ap.add_argument("--vmax", type=float, default=4500)
-    ap.add_argument("--start", type=int, default=0)
-    ap.add_argument("--end", type=int, default=-1)
-    ap.add_argument("--every", type=int, default=1)
-
-    # 視覺化方向（可選）
-    ap.add_argument("--rot90", type=int, default=0)
-    ap.add_argument("--flipud", action="store_true")
-    ap.add_argument("--fliplr", action="store_true")
-
-    
-    args = ap.parse_args()
-
-    raw_root = Path(args.raw_root).expanduser().resolve()
-    mar_root = Path(args.mar_root).expanduser().resolve()
-    out_root = Path(args.out_root).expanduser().resolve()
-
+def view_before_after(raw_root: Path, mar_root: Path, out_root: Path, case_id: str,
+                      vmin: float, vmax: float, start: int, end: int, every: int,
+                      rot90: int, flipud: bool, fliplr: bool):
+    """
+    Creates a side-by-side comparison PNG for each slice, showing the original image, 
+    the MAR-processed image, and a difference map.
+    """
     if not raw_root.is_dir():
         raise FileNotFoundError(f"--raw_root 不存在或不是資料夾：{raw_root}")
     if not mar_root.is_dir():
         raise FileNotFoundError(f"--mar_root 不存在或不是資料夾：{mar_root}")
     out_root.mkdir(parents=True, exist_ok=True)
  
-    if args.case_id:
-        key = args.case_id
+    if case_id:
+        key = case_id
         raw_path = find_nii_by_key(raw_root, key)
         mar_path = find_nii_by_key(mar_root, key)
         export_one_case(
             raw_path=raw_path,
             mar_path=mar_path,
             out_dir=out_root / key,
-            vmin=args.vmin, vmax=args.vmax,
-            start=args.start, end=args.end, every=args.every,
-            rot90=args.rot90, flipud=args.flipud, fliplr=args.fliplr
+            vmin=vmin, vmax=vmax,
+            start=start, end=end, every=every,
+            rot90=rot90, flipud=flipud, fliplr=fliplr
         )
         return
 
-    # 批次：找 raw_root 與 mar_root 同名病例
+    # Batch mode
     raw_files = list_nii(raw_root)
     mar_files = list_nii(mar_root)
 
@@ -215,11 +150,45 @@ def main():
             raw_path=raw_map[key],
             mar_path=mar_map[key],
             out_dir=out_root / key,
-            vmin=args.vmin, vmax=args.vmax,
-            start=args.start, end=args.end, every=args.every,
-            rot90=args.rot90, flipud=args.flipud, fliplr=args.fliplr
+            vmin=vmin, vmax=vmax,
+            start=start, end=end, every=every,
+            rot90=rot90, flipud=flipud, fliplr=fliplr
         )
 
+def main():
+    ap = argparse.ArgumentParser()
+
+    # New paths
+    ap.add_argument("--raw_root", type=str, required=True, help="原始 NIfTI 資料夾（例如 data_origin/）")
+    ap.add_argument("--mar_root", type=str, required=True, help="推論輸出 NIfTI 資料夾（例如 ../results/.../X_mar/）")
+    ap.add_argument("--out_root", type=str, required=True, help="輸出根資料夾（每位病人會輸出到 out_root/<case_id>/）")
+
+    # Single patient (optional)
+    ap.add_argument("--case_id", type=str, default="", help="指定單一病人 ID（檔名不含副檔名，例如 28643177）")
+
+    # Display/output control
+    ap.add_argument("--vmin", type=float, default=-1000)
+    ap.add_argument("--vmax", type=float, default=4500)
+    ap.add_argument("--start", type=int, default=0)
+    ap.add_argument("--end", type=int, default=-1)
+    ap.add_argument("--every", type=int, default=1)
+
+    # Visualization orientation (optional)
+    ap.add_argument("--rot90", type=int, default=0)
+    ap.add_argument("--flipud", action="store_true")
+    ap.add_argument("--fliplr", action="store_true")
+
+    args = ap.parse_args()
+
+    view_before_after(
+        raw_root=Path(args.raw_root).expanduser().resolve(),
+        mar_root=Path(args.mar_root).expanduser().resolve(),
+        out_root=Path(args.out_root).expanduser().resolve(),
+        case_id=args.case_id,
+        vmin=args.vmin, vmax=args.vmax,
+        start=args.start, end=args.end, every=args.every,
+        rot90=args.rot90, flipud=args.flipud, fliplr=args.fliplr
+    )
 
 if __name__ == "__main__":
     main()

@@ -1,96 +1,104 @@
-## InDuDoNet/test_clinic.py
+# CBCT Processing and Visualization Tool
 
-推論: 從有偽影的影像，推論成去除偽影的影像
+This project provides a suite of Python scripts for processing and visualizing Cone-Beam CT (CBCT) data, with a focus on Metal Artifact Reduction (MAR).
 
-Input: 
-- data_path : 推論前的 `.nni.gz` 檔案路徑，e.g.，`"InDuDoNet/ours/test"`
+## Project Structure
 
+The project is organized into the following directories:
 
-Output:
-- save_path : 推論後的 `.nni.gz` 檔案路徑，e.g.，`"InDuDoNet/results/CLINIC_metal_640*640*0.25" `
+- `cbct/`: Python module containing the core functionality for processing and visualizing CBCT data.
+- `scripts/`: Main CLI entry point.
+- `tests/`: Unit tests.
 
-Others:
-- model_dir : 模型權重路徑，e.g.，`"InDuDoNet/pretrained_model/InDuDoNet_latest.pt"`
+## Installation
 
-```
-python test_clinic.py \
-	--model_dir "pretrained_model/InDuDoNet_latest.pt" \
-	--data_path "ours/test" \
-	--save_path "results/CLINIC_metal_640*640*0.25"
-```
+The following libraries are required:
 
+- `pydicom`
+- `numpy`
+- `nibabel`
+- `scipy`
+- `Pillow`
+- `imageio`
 
+You can install them with pip:
 
-## InDuDoNet/ours/cbct_to_nifit.py
-輸出 : data_resample/
-```
-python cbct_to_nifit.py
-```
-
-## InDuDoNet/ours/python debug_mask.py
-輸出 : threshold_debug/
-```
-python debug_mask.py 
+```bash
+pip install pydicom numpy nibabel scipy Pillow imageio
 ```
 
-## InDuDoNet/ours/view_before_after.py
+## Usage
 
-將推論前、推論後的結果視覺化
+The main entry point for this project is `scripts/main.py`. This script provides a CLI for converting DICOM files to NIfTI, visualizing MAR results, and comparing before and after images.
 
-Input: 
-- raw_root : 推論前的 `.nni.gz` 位置，e.g.，`"InDuDoNet/ours/data_640*640*0.25"`
-- mar_root : 推論後的 `.nni.gz` 位置，e.g.，`"InDuDoNet/results/CLINIC_metal_640*640*0.25/X_mar"`
+### Convert DICOM to NIfTI
 
-Output:
-- out_root : 推論前後的 `.nni.gz` 視覺化成為 `.png`，e.g.，`"InDuDoNet/ours/visualize/640*640*0.25/"`
+To convert a list of patient CBCT DICOM series into NIfTI format, use the `convert` command:
 
-Parameter:
-- case_id : 指定病人的 `id`
-- vmin、vmax : `HU` 顯示範圍
-- every : 1=顯示每張切片
-
-```
-python view_before_after.py \
-  --raw_root "data_640*640*0.25" \
-  --mar_root "../results/CLINIC_metal_640*640*0.25/X_mar" \
-  --out_root "visualize/640*640*0.25/" \
-  --case_id 57969132 \
-  --vmin -1000 --vmax 4500 \
-  --every 1
+```bash
+python scripts/main.py convert <patient_id_1> <patient_id_2> ... \
+    --base_dir <base_data_dir> \
+    --output_dir <output_dir> \
+    --spacing <target_spacing>
 ```
 
-## InDuDoNet/ours/save_mar_png.py
+### Visualize MAR Results
 
-Input: 
-- mar : 推論後的 `.nni.gz` 位置，e.g.，`"InDuDoNet/results/CLINIC_metal_640*640*0.25/X_mar/57969132_cbct.nii.gz"`
+To save axial slices of a single MAR-processed NIfTI volume as individual PNG files, use the `visualize` command:
 
-
-Output:
-- out_dir : 推論後的 `.nni.gz` 視覺化成為 `.png` 的存放位置，e.g.，`"InDuDoNet/ours/visualize/640x640x0.25/57969132" `
-
-Parameter:
-- target : `.png` 的長寬
-- vmin、vmax : `HU` 顯示範圍
-- every : 1=顯示每張切片
-- no_hu : 不轉成 `HU`，輸出值在 `0~1`
-
-以 HU 視覺輸出
-```
-python save_mar_png.py \
-  --mar "../results/CLINIC_metal_640*640*0.25/X_mar/57969132_cbct.nii.gz" \
-  --out_dir "visualize/640x640x0.25/57969132" \
-  --target 640 \
-  --vmin -1000 --vmax 4500 \
-  --every 1
+```bash
+python scripts/main.py visualize \
+    --mar <mar_nifti_file> \
+    --out_dir <output_dir> \
+    --target <target_size> \
+    --vmin <window_vmin> \
+    --vmax <window_vmax> \
+    --start <start_slice> \
+    --end <end_slice> \
+    --every <every_n_slices> \
+    --no_hu
 ```
 
-直接用 0~1 顯示（不轉 HU）
+### Compare Before and After MAR
+
+To create a side-by-side comparison PNG for each slice, showing the original image, the MAR-processed image, and a difference map, use the `compare` command:
+
+```bash
+python scripts/main.py compare \
+    --raw_root <raw_nifti_root> \
+    --mar_root <mar_nifti_root> \
+    --out_root <output_root> \
+    --case_id <case_id> \
+    --vmin <window_vmin> \
+    --vmax <window_vmax> \
+    --start <start_slice> \
+    --end <end_slice> \
+    --every <every_n_slices> \
+    --rot90 <rot90> \
+    --flipud \
+    --fliplr
 ```
-python save_mar_png.py \
-  --mar "../results/CLINIC_metal_640*640*0.25/X_mar/57969132_cbct.nii.gz" \
-  --out_dir "visualize/640x640/57969132_cbct_norm" \
-  --target 640 \
-  --no_hu \
-  --vmin 0 --vmax 1 \
-  --every 1
+
+### Inspect DICOM Files
+
+To scan a directory of DICOM files, group them by series, and print a detailed summary of their metadata, use the `inspect` command:
+
+```bash
+python scripts/main.py inspect \
+    --root <dicom_root> \
+    --pattern <dicom_dir_pattern> \
+    --ext <dicom_file_extension> \
+    --pixel_sample <num_pixels_to_sample>
+```
+
+### Debug Mask Thresholds
+
+To visualize the effect of different HU thresholds on a specific slice of a NIfTI volume, use the `debug` command:
+
+```bash
+python scripts/main.py debug \
+    --nii_path <nifti_file> \
+    --out_dir <output_dir> \
+    --slice_k <slice_to_visualize> \
+    --thrs <thresholds_to_test>
 ```

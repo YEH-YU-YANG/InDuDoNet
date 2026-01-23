@@ -1,47 +1,21 @@
 import argparse
-import os
 from pathlib import Path
 from collections import defaultdict, Counter
 import numpy as np
 import pydicom
 
-
-def safe_get(ds, name, default=None):
-    return getattr(ds, name, default)
-
+from .utils import safe_get, to_float_list, summarize_unique
 
 def read_header(dcm_path: Path):
-    # 只讀 header（不讀像素），速度快很多
+    # Only read header (not pixels), much faster
     return pydicom.dcmread(str(dcm_path), stop_before_pixels=True, force=True)
 
-
 def read_full(dcm_path: Path):
-    # 需要像素統計時才用
+    # Used only when pixel statistics are needed
     return pydicom.dcmread(str(dcm_path), force=True)
 
-
-def to_float_list(x):
-    if x is None:
-        return None
-    try:
-        return [float(v) for v in x]
-    except Exception:
-        return None
-
-
-def summarize_unique(values, max_show=6):
-    c = Counter([str(v) for v in values if v is not None])
-    if not c:
-        return "None"
-    items = c.most_common(max_show)
-    s = ", ".join([f"{k} (n={n})" for k, n in items])
-    if len(c) > max_show:
-        s += f", ... (+{len(c)-max_show} more)"
-    return s
-
-
 def series_sort_key(ds):
-    # 用 ImagePositionPatient 排序（較可靠），不行再用 InstanceNumber
+    # Sort by ImagePositionPatient (more reliable), then fall back to InstanceNumber
     ipp = safe_get(ds, "ImagePositionPatient", None)
     if ipp is not None and len(ipp) >= 3:
         try:
@@ -54,20 +28,19 @@ def series_sort_key(ds):
     except Exception:
         return 0.0
 
-
 def inspect_series(files, pixel_sample=0):
-    # 讀 headers
+    # Read headers
     headers = []
     for f in files:
         try:
             headers.append(read_header(f))
         except Exception as e:
-            print(f"  [WARN] 讀取 header 失敗: {f} -> {e}")
+            print(f"  [WARN] Failed to read header: {f} -> {e}")
 
     if not headers:
         return
 
-    # 基本集合資訊
+    # Basic series information
     modality = [safe_get(ds, "Modality") for ds in headers]
     sop = [safe_get(ds, "SOPClassUID") for ds in headers]
     study = [safe_get(ds, "StudyInstanceUID") for ds in headers]
@@ -81,7 +54,6 @@ def inspect_series(files, pixel_sample=0):
     thick = [safe_get(ds, "SliceThickness") for ds in headers]
     sbs = [safe_get(ds, "SpacingBetweenSlices") for ds in headers]
     iop = [safe_get(ds, "ImageOrientationPatient") for ds in headers]
-    ipp = [safe_get(ds, "ImagePositionPatient") for ds in headers]
 
     slope = [safe_get(ds, "RescaleSlope") for ds in headers]
     intercept = [safe_get(ds, "RescaleIntercept") for ds in headers]
@@ -95,7 +67,7 @@ def inspect_series(files, pixel_sample=0):
     kernel = [safe_get(ds, "ConvolutionKernel") for ds in headers]
     kvp = [safe_get(ds, "KVP") for ds in headers]
 
-    # 排序檢查
+    # Sorting check
     headers_sorted = sorted(headers, key=series_sort_key)
     z_list = []
     for ds in headers_sorted:
@@ -106,26 +78,26 @@ def inspect_series(files, pixel_sample=0):
             except Exception:
                 pass
 
-    order_info = "未知"
+    order_info = "Unknown"
     if len(z_list) >= 2:
         diffs = np.diff(np.array(z_list, dtype=np.float64))
         nonzero = diffs[np.abs(diffs) > 1e-6]
         if nonzero.size == 0:
-            order_info = "疑似全部同一位置（IPP z 無變化）"
+            order_info = "Likely all at the same location (IPP z has no change)"
         else:
             inc = np.all(nonzero > 0)
             dec = np.all(nonzero < 0)
             step_med = float(np.median(np.abs(nonzero)))
-            order_info = f"IPP z {'遞增' if inc else ('遞減' if dec else '不單調')}，|dz| 中位數={step_med:.4f}"
+            order_info = f"IPP z {'increasing' if inc else ('decreasing' if dec else 'not monotonic')}, |dz| median={step_med:.4f}"
     else:
-        # 退而求其次看 InstanceNumber
+        # Fallback to InstanceNumber
         insts = [safe_get(ds, "InstanceNumber", None) for ds in headers_sorted]
         if any(v is not None for v in insts):
-            order_info = "使用 InstanceNumber 排序（IPP 不足）"
+            order_info = "Using InstanceNumber for sorting (IPP insufficient)"
         else:
-            order_info = "無 IPP / InstanceNumber，排序不可靠"
+            order_info = "No IPP / InstanceNumber, sorting is unreliable"
 
-    # 輸出
+    # Output
     print("  SeriesInstanceUID:", summarize_unique(series, max_show=1))
     print("  StudyInstanceUID :", summarize_unique(study, max_show=1))
     print("  SeriesNumber     :", summarize_unique(series_num, max_show=3))
@@ -136,7 +108,7 @@ def inspect_series(files, pixel_sample=0):
     print("  ModelName        :", summarize_unique(model, max_show=3))
     print("  ConvolutionKernel:", summarize_unique(kernel, max_show=3))
     print("  KVP              :", summarize_unique(kvp, max_show=3))
-    print("  Slices (檔案數)   :", len(headers))
+    print("  Slices (file count):", len(headers))
     print("  Rows x Cols      :", summarize_unique(rows, max_show=3), "x", summarize_unique(cols, max_show=3))
     print("  PixelSpacing     :", summarize_unique([to_float_list(x) for x in pxsp], max_show=3))
     print("  SliceThickness   :", summarize_unique(thick, max_show=3))
@@ -147,26 +119,26 @@ def inspect_series(files, pixel_sample=0):
           "| PixelRepr(0u/1s):", summarize_unique(signed, max_show=3))
     print("  RescaleSlope     :", summarize_unique(slope, max_show=3))
     print("  RescaleIntercept :", summarize_unique(intercept, max_show=3))
-    print("  排序檢查          :", order_info)
+    print("  Sorting check    :", order_info)
 
-    # 像素抽樣統計（可選）
+    # Optional pixel sampling statistics
     if pixel_sample and files:
         n = len(files)
         k = min(pixel_sample, n)
-        # 均勻抽樣 k 張
+        # Uniformly sample k slices
         idxs = np.linspace(0, n - 1, k, dtype=int)
-        sampled = [files[i] for i in idxs]
+        sampled_files = [files[i] for i in idxs]
 
         vals = []
         slope0 = None
         inter0 = None
 
-        for f in sampled:
+        for f in sampled_files:
             try:
                 ds = read_full(f)
                 arr = ds.pixel_array.astype(np.float32)
 
-                # 套 rescale（若存在）
+                # Apply rescale if present
                 s = safe_get(ds, "RescaleSlope", None)
                 itc = safe_get(ds, "RescaleIntercept", None)
                 if s is not None and itc is not None:
@@ -178,7 +150,7 @@ def inspect_series(files, pixel_sample=0):
 
                 vals.append(arr.reshape(-1))
             except Exception as e:
-                print(f"  [WARN] 讀取像素失敗: {f} -> {e}")
+                print(f"  [WARN] Failed to read pixels: {f} -> {e}")
 
         if vals:
             v = np.concatenate(vals, axis=0)
@@ -186,59 +158,49 @@ def inspect_series(files, pixel_sample=0):
             vmin, vmax = float(np.min(v)), float(np.max(v))
             mean, std = float(np.mean(v)), float(np.std(v))
 
-            print("  --- 像素抽樣統計 ---")
+            print("  --- Pixel Sampling Statistics ---")
             if slope0 is not None:
-                print(f"  (已套用 rescale: slope={slope0}, intercept={inter0}；若是 CT 可能近似 HU，但 CBCT 未必是真 HU)")
+                print(f"  (Rescale applied: slope={slope0}, intercept={inter0}; may approximate HU for CT, but not necessarily true HU for CBCT)")
             else:
-                print("  (未發現 rescale；以下為原始灰階)")
+                print("  (No rescale found; below are raw grayscale values)")
             print(f"  min={vmin:.3f}, p1={p01:.3f}, median={p50:.3f}, p99={p99:.3f}, max={vmax:.3f}, mean={mean:.3f}, std={std:.3f}")
 
-            # 針對 InDuDoNet 前處理的「2500 HU」概念給你參考
-            # 若資料真是 HU，2500 通常很高；若 CBCT 灰階不同，這門檻可能不適用
+            # For reference with InDuDoNet preprocessing "2500 HU" concept
+            # If data is true HU, 2500 is usually high; if CBCT grayscale is different, this threshold may not apply
             thr = 2500.0
             frac = float(np.mean(v > thr))
-            print(f"  >2500 的比例（參考用）: {frac*100:.4f}%")
+            print(f"  Fraction >2500 (for reference): {frac*100:.4f}%")
         else:
-            print("  [WARN] 無法取得任何像素資料做統計")
+            print("  [WARN] Could not get any pixel data for statistics")
 
-
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--root", type=str, required=True,
-                    help="包含多個病人資料夾的根目錄，例如 /data/root")
-    ap.add_argument("--pattern", type=str, default="cbct",
-                    help="病人資料夾下的子資料夾名稱，預設 cbct")
-    ap.add_argument("--ext", type=str, default=".dcm",
-                    help="副檔名，預設 .dcm（若你沒有副檔名可改成空字串）")
-    ap.add_argument("--pixel_sample", type=int, default=0,
-                    help="每個 series 抽樣讀取像素的張數（0 表示不讀像素）")
-    args = ap.parse_args()
-
-    root = Path(args.root)
+def inspect_dicom_cbct(root: Path, pattern: str, ext: str, pixel_sample: int):
+    """
+    Scans a directory of DICOM files, groups them by series, and prints a detailed summary of their metadata.
+    """
     if not root.is_dir():
-        raise SystemExit(f"root 不存在或不是資料夾: {root}")
+        raise SystemExit(f"Root does not exist or is not a directory: {root}")
 
-    # 掃描所有病人
+    # Scan all patients
     patients = sorted([p for p in root.iterdir() if p.is_dir()])
     if not patients:
-        raise SystemExit("root 底下沒有任何子資料夾（病人資料夾）")
+        raise SystemExit("No subdirectories (patient folders) found in the root")
 
     for p in patients:
-        cbct_dir = p / args.pattern
+        cbct_dir = p / pattern
         if not cbct_dir.is_dir():
             continue
 
-        # 收集 dcm
-        if args.ext:
-            files = sorted(cbct_dir.rglob(f"*{args.ext}"))
+        # Collect dcm files
+        if ext:
+            files = sorted(cbct_dir.rglob(f"*{ext}"))
         else:
             files = sorted([x for x in cbct_dir.rglob("*") if x.is_file()])
 
         if not files:
-            print(f"\n[Patient] {p.name} -> 找不到 DICOM 檔案 in {cbct_dir}")
+            print(f"\n[Patient] {p.name} -> No DICOM files found in {cbct_dir}")
             continue
 
-        # 依 SeriesInstanceUID 分組
+        # Group by SeriesInstanceUID
         groups = defaultdict(list)
         for f in files:
             try:
@@ -246,13 +208,26 @@ def main():
                 uid = safe_get(ds, "SeriesInstanceUID", "NO_UID")
                 groups[str(uid)].append(f)
             except Exception as e:
-                print(f"[WARN] 讀取 header 失敗: {f} -> {e}")
+                print(f"[WARN] Failed to read header: {f} -> {e}")
 
-        print(f"\n[Patient] {p.name}  (series 數={len(groups)})")
+        print(f"\n[Patient] {p.name}  (Series count={len(groups)})")
         for uid, flist in groups.items():
-            print(f"\n [Series] UID={uid}  (檔案數={len(flist)})")
-            inspect_series(sorted(flist), pixel_sample=args.pixel_sample)
+            print(f"\n [Series] UID={uid}  (File count={len(flist)})")
+            inspect_series(sorted(flist), pixel_sample=pixel_sample)
 
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--root", type=str, required=True,
+                    help="Root directory containing multiple patient folders, e.g., /data/root")
+    ap.add_argument("--pattern", type=str, default="cbct",
+                    help="Subfolder name under the patient folder, default: cbct")
+    ap.add_argument("--ext", type=str, default=".dcm",
+                    help="File extension, default: .dcm (can be empty string if no extension)")
+    ap.add_argument("--pixel_sample", type=int, default=0,
+                    help="Number of images to sample for pixel statistics per series (0 means no pixel reading)")
+    args = ap.parse_args()
+
+    inspect_dicom_cbct(Path(args.root), args.pattern, args.ext, args.pixel_sample)
 
 if __name__ == "__main__":
     main()
